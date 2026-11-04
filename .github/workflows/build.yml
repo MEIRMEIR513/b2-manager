@@ -24,11 +24,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller
+        pip install pyinstaller b2sdk
 
     - name: Build EXE
       run: |
-        pyinstaller --onefile --windowed --add-data "b2-windows.exe;." b2_manager.py
+        pyinstaller --onefile --windowed b2_manager.py
         Move-Item -Path dist/b2_manager.exe -Destination dist/B2Manager.exe
 
     - name: Create Release

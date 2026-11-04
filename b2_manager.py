@@ -1,9 +1,15 @@
 import os
 import sys
-import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from b2sdk.v1 import (
+    InMemoryAccountInfo,
+    B2Api,
+    B2HttpRequest,
+    EncryptionSetting,
+    UploadSourceLocalFile
+)
 
 class B2Manager:
     def __init__(self, root):
@@ -14,33 +20,11 @@ class B2Manager:
 
         self.selected_bucket = None
         self.selected_file = None
-        self.b2_exe = self.get_b2_path()
+        self.current_folder = ""
+        self.b2_api = None
+        self.account_info = InMemoryAccountInfo()
 
         self.create_widgets()
-
-    def get_b2_path(self):
-        # Check if running from PyInstaller bundle
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        # Check in current directory
-        b2_path = os.path.join(os.getcwd(), "b2-windows.exe")
-        if os.path.exists(b2_path):
-            return b2_path
-
-        # Check in bundle directory
-        b2_path = os.path.join(base_path, "b2-windows.exe")
-        if os.path.exists(b2_path):
-            return b2_path
-
-        # Check if b2 is in PATH
-        try:
-            subprocess.run(["b2", "--version"], capture_output=True, check=True)
-            return "b2"
-        except:
-            return None
 
     def create_widgets(self):
         # Title
@@ -79,9 +63,20 @@ class B2Manager:
         file_frame = tk.LabelFrame(lists_frame, text="Files", font=("Arial", 10, "bold"))
         file_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
 
+        # Add navigation buttons
+        nav_frame = tk.Frame(file_frame)
+        nav_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.back_btn = tk.Button(nav_frame, text="↑ Back", command=self.go_back, state=tk.DISABLED, width=10)
+        self.back_btn.pack(side=tk.LEFT, padx=2)
+
+        self.current_path_label = tk.Label(nav_frame, text="", font=("Arial", 8), fg="gray")
+        self.current_path_label.pack(side=tk.LEFT, padx=5)
+
         self.file_listbox = tk.Listbox(file_frame, font=("Arial", 9), selectmode=tk.SINGLE)
         self.file_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.file_listbox.bind('<<ListboxSelect>>', self.on_file_select)
+        self.file_listbox.bind('<Double-Button-1>', self.on_file_double_click)
 
         # Upload Frame
         upload_frame = tk.LabelFrame(self.root, text="Upload File", font=("Arial", 10, "bold"))
@@ -121,48 +116,12 @@ class B2Manager:
         delete_btn.pack(side=tk.LEFT, padx=5)
 
         # Progress Bar
-        self.progress = ttk.Progressbar(self.root, mode='indeterminate', length=800)
+        self.progress = ttk.Progressbar(self.root, mode='determinate', length=800)
         self.progress.pack(pady=5)
 
         # Status Label
         self.status_label = tk.Label(self.root, text="Ready", font=("Arial", 9), fg="gray")
         self.status_label.pack(pady=5)
-
-        # Check b2 executable
-        if not self.b2_exe:
-            self.status_label.config(text="Warning: b2-windows.exe not found!", fg="red")
-
-    def run_command(self, command):
-        try:
-            if self.b2_exe and os.path.exists(self.b2_exe):
-                cmd = [self.b2_exe] + command.split()[1:]
-            else:
-                cmd = command.split()
-
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            return e.stderr
-        except Exception as e:
-            return str(e)
-
-    def set_env_and_run(self, key_id, key, command):
-        env = os.environ.copy()
-        env['B2_APPLICATION_KEY_ID'] = key_id
-        env['B2_APPLICATION_KEY'] = key
-
-        try:
-            if self.b2_exe and os.path.exists(self.b2_exe):
-                cmd = [self.b2_exe] + command.split()[1:]
-            else:
-                cmd = command.split()
-
-            result = subprocess.run(cmd, capture_output=True, text=True, env=env, check=True)
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            return e.stderr
-        except Exception as e:
-            return str(e)
 
     def connect_to_b2(self):
         key_id = self.key_id_entry.get().strip()
@@ -176,54 +135,110 @@ class B2Manager:
         self.progress.start()
 
         def connect_thread():
-            result = self.set_env_and_run(key_id, key, "b2 account authorize")
-            self.root.after(0, self.connect_complete, result)
+            try:
+                self.b2_api = B2Api(self.account_info)
+                self.b2_api.authorize_account('production', key_id, key)
+                self.root.after(0, self.connect_complete, True, "Connected successfully!")
+            except Exception as e:
+                self.root.after(0, self.connect_complete, False, str(e))
 
         thread = threading.Thread(target=connect_thread)
         thread.daemon = True
         thread.start()
 
-    def connect_complete(self, result):
+    def connect_complete(self, success, message):
         self.progress.stop()
-        if "accountId" in result:
-            self.status_label.config(text="Connected successfully!", fg="green")
+        if success:
+            self.status_label.config(text=message, fg="green")
             self.list_buckets()
         else:
-            self.status_label.config(text="Connection failed. Check your keys.", fg="red")
+            self.status_label.config(text=f"Connection failed: {message}", fg="red")
 
     def list_buckets(self):
-        result = self.run_command("b2 bucket list")
-        self.bucket_listbox.delete(0, tk.END)
-
-        lines = result.split('\n')
-        for line in lines:
-            if line.strip() and "accountId" not in line:
-                parts = line.strip().split()
-                if len(parts) >= 3:
-                    self.bucket_listbox.insert(tk.END, parts[2])
+        try:
+            buckets = self.b2_api.list_buckets()
+            self.bucket_listbox.delete(0, tk.END)
+            for bucket in buckets:
+                self.bucket_listbox.insert(tk.END, bucket.name)
+        except Exception as e:
+            self.status_label.config(text=f"Error listing buckets: {str(e)}", fg="red")
 
     def on_bucket_select(self, event):
         selection = self.bucket_listbox.curselection()
         if selection:
             self.selected_bucket = self.bucket_listbox.get(selection[0])
+            self.current_folder = ""
             self.list_files()
 
     def list_files(self):
-        if not self.selected_bucket:
+        if not self.selected_bucket or not self.b2_api:
             return
 
-        result = self.run_command(f"b2 ls b2://{self.selected_bucket}")
-        self.file_listbox.delete(0, tk.END)
+        try:
+            bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
+            prefix = self.current_folder
 
-        lines = result.split('\n')
-        for line in lines:
-            if line.strip():
-                self.file_listbox.insert(tk.END, line.strip())
+            # List files and folders
+            files, folders = bucket.ls(prefix_to_list=prefix, recursive=False, limit=1000)
+
+            self.file_listbox.delete(0, tk.END)
+
+            # Add folders first
+            for folder in folders:
+                folder_name = folder.file_name[len(prefix):] if prefix else folder.file_name
+                if folder_name.endswith('/'):
+                    self.file_listbox.insert(tk.END, f"📁 {folder_name}")
+                else:
+                    self.file_listbox.insert(tk.END, f"📁 {folder_name}/")
+
+            # Add files
+            for file_info in files:
+                file_name = file_info.file_name[len(prefix):] if prefix else file_info.file_name
+                size = self.format_size(file_info.size)
+                self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+
+            # Update navigation
+            if self.current_folder:
+                self.back_btn.config(state=tk.NORMAL)
+                self.current_path_label.config(text=self.current_folder)
+            else:
+                self.back_btn.config(state=tk.DISABLED)
+                self.current_path_label.config(text="")
+
+        except Exception as e:
+            self.status_label.config(text=f"Error listing files: {str(e)}", fg="red")
+
+    def format_size(self, size):
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
 
     def on_file_select(self, event):
         selection = self.file_listbox.curselection()
         if selection:
             self.selected_file = self.file_listbox.get(selection[0])
+
+    def on_file_double_click(self, event):
+        selection = self.file_listbox.curselection()
+        if selection:
+            item = self.file_listbox.get(selection[0])
+            if item.startswith("📁"):
+                # It's a folder, navigate into it
+                folder_name = item[2:].strip()
+                if folder_name.endswith('/'):
+                    folder_name = folder_name[:-1]
+                self.current_folder = os.path.join(self.current_folder, folder_name).replace('\\', '/')
+                if self.current_folder.startswith('/'):
+                    self.current_folder = self.current_folder[1:]
+                self.list_files()
+
+    def go_back(self):
+        if self.current_folder:
+            parent = os.path.dirname(self.current_folder)
+            self.current_folder = parent
+            self.list_files()
 
     def browse_upload_file(self):
         filepath = filedialog.askopenfilename()
@@ -238,8 +253,8 @@ class B2Manager:
             self.download_entry.insert(0, folder)
 
     def upload_file(self):
-        if not self.selected_bucket:
-            messagebox.showerror("Error", "Please select a bucket first")
+        if not self.selected_bucket or not self.b2_api:
+            messagebox.showerror("Error", "Please connect and select a bucket first")
             return
 
         filepath = self.upload_entry.get().strip()
@@ -252,33 +267,49 @@ class B2Manager:
             return
 
         filename = os.path.basename(filepath)
+        if self.current_folder:
+            b2_filename = self.current_folder + '/' + filename
+        else:
+            b2_filename = filename
 
         self.status_label.config(text="Uploading...", fg="blue")
-        self.progress.start()
+        self.progress['value'] = 0
 
         def upload_thread():
-            result = self.run_command(f"b2 file upload {self.selected_bucket} \"{filepath}\" \"{filename}\"")
-            self.root.after(0, self.upload_complete, result)
+            try:
+                bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
+                upload_info = bucket.upload_local_file(
+                    local_file=filepath,
+                    file_name=b2_filename
+                )
+                self.root.after(0, self.upload_complete, True, "Upload successful!")
+            except Exception as e:
+                self.root.after(0, self.upload_complete, False, str(e))
 
         thread = threading.Thread(target=upload_thread)
         thread.daemon = True
         thread.start()
 
-    def upload_complete(self, result):
-        self.progress.stop()
-        if "fileId" in result:
-            self.status_label.config(text="Upload successful!", fg="green")
+    def upload_complete(self, success, message):
+        self.progress['value'] = 0
+        if success:
+            self.status_label.config(text=message, fg="green")
             self.list_files()
         else:
-            self.status_label.config(text="Upload failed.", fg="red")
+            self.status_label.config(text=f"Upload failed: {message}", fg="red")
 
     def download_file(self):
         if not self.selected_file:
             messagebox.showerror("Error", "Please select a file first")
             return
 
-        if not self.selected_bucket:
-            messagebox.showerror("Error", "Please select a bucket first")
+        if not self.selected_bucket or not self.b2_api:
+            messagebox.showerror("Error", "Please connect and select a bucket first")
+            return
+
+        # Check if it's a folder
+        if self.selected_file.startswith("📁"):
+            messagebox.showerror("Error", "Cannot download folders. Please select a file.")
             return
 
         download_path = self.download_entry.get().strip()
@@ -286,57 +317,120 @@ class B2Manager:
             messagebox.showerror("Error", "Invalid download path")
             return
 
-        filename = self.selected_file.split('/')[-1] if '/' in self.selected_file else self.selected_file
-        output_path = os.path.join(download_path, filename)
+        # Extract actual filename from display
+        display_name = self.selected_file[2:].strip()
+        # Remove size info if present
+        if '(' in display_name:
+            display_name = display_name.rsplit('(', 1)[0].strip()
+
+        # Build full B2 path
+        if self.current_folder:
+            b2_filename = self.current_folder + '/' + display_name
+        else:
+            b2_filename = display_name
+
+        output_path = os.path.join(download_path, os.path.basename(b2_filename))
 
         self.status_label.config(text="Downloading...", fg="blue")
-        self.progress.start()
+        self.progress['value'] = 0
 
         def download_thread():
-            result = self.run_command(f"b2 file download b2://{self.selected_bucket}/{self.selected_file} \"{output_path}\"")
-            self.root.after(0, self.download_complete, result)
+            try:
+                bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
+                file_info = bucket.get_file_info_by_name(b2_filename)
+
+                # Download with progress
+                progress_listener = DownloadProgressListener(self)
+                bucket.download_file_by_id(
+                    file_info.id_,
+                    output_path,
+                    progress_listener=progress_listener
+                )
+                self.root.after(0, self.download_complete, True, "Download successful!")
+            except Exception as e:
+                self.root.after(0, self.download_complete, False, str(e))
 
         thread = threading.Thread(target=download_thread)
         thread.daemon = True
         thread.start()
 
-    def download_complete(self, result):
-        self.progress.stop()
-        if "Download finished" in result or "File size:" in result:
-            self.status_label.config(text="Download successful!", fg="green")
+    def download_complete(self, success, message):
+        self.progress['value'] = 0
+        if success:
+            self.status_label.config(text=message, fg="green")
         else:
-            self.status_label.config(text="Download failed.", fg="red")
+            self.status_label.config(text=f"Download failed: {message}", fg="red")
 
     def delete_file(self):
         if not self.selected_file:
             messagebox.showerror("Error", "Please select a file first")
             return
 
-        if not self.selected_bucket:
-            messagebox.showerror("Error", "Please select a bucket first")
+        if not self.selected_bucket or not self.b2_api:
+            messagebox.showerror("Error", "Please connect and select a bucket first")
             return
 
-        if not messagebox.askyesno("Confirm", f"Are you sure you want to delete {self.selected_file}?"):
+        # Check if it's a folder
+        if self.selected_file.startswith("📁"):
+            messagebox.showerror("Error", "Cannot delete folders via this interface yet.")
+            return
+
+        # Extract actual filename
+        display_name = self.selected_file[2:].strip()
+        if '(' in display_name:
+            display_name = display_name.rsplit('(', 1)[0].strip()
+
+        if self.current_folder:
+            b2_filename = self.current_folder + '/' + display_name
+        else:
+            b2_filename = display_name
+
+        if not messagebox.askyesno("Confirm", f"Are you sure you want to delete {display_name}?"):
             return
 
         self.status_label.config(text="Deleting...", fg="blue")
-        self.progress.start()
+        self.progress['value'] = 0
 
         def delete_thread():
-            result = self.run_command(f"b2 file delete b2://{self.selected_bucket}/{self.selected_file}")
-            self.root.after(0, self.delete_complete, result)
+            try:
+                bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
+                file_info = bucket.get_file_info_by_name(b2_filename)
+                bucket.delete_file_version(file_info.id_, file_info.file_name)
+                self.root.after(0, self.delete_complete, True, "Delete successful!")
+            except Exception as e:
+                self.root.after(0, self.delete_complete, False, str(e))
 
         thread = threading.Thread(target=delete_thread)
         thread.daemon = True
         thread.start()
 
-    def delete_complete(self, result):
-        self.progress.stop()
-        if "fileId" in result or "fileName" in result:
-            self.status_label.config(text="Delete successful!", fg="green")
+    def delete_complete(self, success, message):
+        self.progress['value'] = 0
+        if success:
+            self.status_label.config(text=message, fg="green")
             self.list_files()
         else:
-            self.status_label.config(text="Delete failed.", fg="red")
+            self.status_label.config(text=f"Delete failed: {message}", fg="red")
+
+    def update_progress(self, value):
+        self.progress['value'] = value
+
+
+class DownloadProgressListener:
+    def __init__(self, app):
+        self.app = app
+        self.bytes_total = 0
+        self.bytes_so_far = 0
+
+    def set_total_bytes(self, total_bytes):
+        self.bytes_total = total_bytes
+
+    def bytes_completed(self, byte_count):
+        self.bytes_so_far = byte_count
+        if self.bytes_total > 0:
+            progress = (self.bytes_so_far / self.bytes_total) * 100
+            self.app.root.after(0, self.app.update_progress, progress)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
