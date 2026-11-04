@@ -10,12 +10,29 @@ from b2sdk.v2 import (
     DoNothingProgressListener
 )
 
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller."""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 class B2Manager:
     def __init__(self, root):
         self.root = root
         self.root.title("B2 Cloud Storage Manager")
         self.root.geometry("900x650")
         self.root.resizable(False, False)
+        
+        # Set window icon
+        try:
+            icon_path = resource_path("icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception:
+            pass  # If icon fails to load, continue without it
 
         self.selected_bucket = None
         self.selected_file = None
