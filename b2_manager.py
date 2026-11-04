@@ -177,7 +177,7 @@ class B2Manager:
             prefix = self.current_folder
 
             # List files and folders
-            files, folders = bucket.ls(prefix_to_list=prefix, recursive=False, limit=1000)
+            files, folders = bucket.ls(prefix, recursive=False, limit=1000)
 
             self.file_listbox.delete(0, tk.END)
 
