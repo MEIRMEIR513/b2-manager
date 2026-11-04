@@ -3,7 +3,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from b2sdk.v3 import (
+from b2sdk.v2 import (
     InMemoryAccountInfo,
     B2Api,
     DoNothingProgressListener
@@ -135,8 +135,8 @@ class B2Manager:
         def connect_thread():
             try:
                 self.b2_api = B2Api(self.account_info)
-                # v3 order: application_key_id, application_key, realm
-                self.b2_api.authorize_account(key_id, key, 'production')
+                # v2 order: realm, application_key_id, application_key
+                self.b2_api.authorize_account('production', key_id, key)
                 self.root.after(0, self.connect_complete, True, "Connected successfully!")
             except Exception as e:
                 self.root.after(0, self.connect_complete, False, str(e))
