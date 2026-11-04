@@ -174,26 +174,25 @@ class B2Manager:
 
         try:
             bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
-            prefix = self.current_folder
-
-            # List files and folders
-            files, folders = bucket.ls(prefix, recursive=False, limit=1000)
+            folder_to_list = self.current_folder
 
             self.file_listbox.delete(0, tk.END)
 
-            # Add folders first
-            for folder in folders:
-                folder_name = folder.file_name[len(prefix):] if prefix else folder.file_name
-                if folder_name.endswith('/'):
-                    self.file_listbox.insert(tk.END, f"📁 {folder_name}")
+            # List files and folders - ls returns generator of (file_version, folder_name) tuples
+            folders_seen = set()
+            for file_version, folder_name in bucket.ls(folder_to_list=folder_to_list, latest_only=True, recursive=False, fetch_count=1000):
+                if folder_name and folder_name not in folders_seen:
+                    # This is a folder
+                    display_name = folder_name[len(folder_to_list):] if folder_to_list else folder_name
+                    if display_name.endswith('/'):
+                        display_name = display_name[:-1]
+                    self.file_listbox.insert(tk.END, f"📁 {display_name}")
+                    folders_seen.add(folder_name)
                 else:
-                    self.file_listbox.insert(tk.END, f"📁 {folder_name}/")
-
-            # Add files
-            for file_info in files:
-                file_name = file_info.file_name[len(prefix):] if prefix else file_info.file_name
-                size = self.format_size(file_info.size)
-                self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+                    # This is a file
+                    file_name = file_version.file_name[len(folder_to_list):] if folder_to_list else file_version.file_name
+                    size = self.format_size(file_version.size)
+                    self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
 
             # Update navigation
             if self.current_folder:
@@ -225,11 +224,10 @@ class B2Manager:
             if item.startswith("📁"):
                 # It's a folder, navigate into it
                 folder_name = item[2:].strip()
-                if folder_name.endswith('/'):
-                    folder_name = folder_name[:-1]
-                self.current_folder = os.path.join(self.current_folder, folder_name).replace('\\', '/')
-                if self.current_folder.startswith('/'):
-                    self.current_folder = self.current_folder[1:]
+                if self.current_folder:
+                    self.current_folder = self.current_folder + '/' + folder_name
+                else:
+                    self.current_folder = folder_name
                 self.list_files()
 
     def go_back(self):
