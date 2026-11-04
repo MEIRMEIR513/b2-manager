@@ -6,8 +6,7 @@ from tkinter import ttk, messagebox, filedialog
 from b2sdk.v2 import (
     InMemoryAccountInfo,
     B2Api,
-    DoNothingProgressListener,
-    MtimeUpdatedFile
+    DoNothingProgressListener
 )
 
 class B2Manager:
@@ -353,16 +352,10 @@ class B2Manager:
                 # Download by ID (most stable method)
                 downloaded_file = self.b2_api.download_file_by_id(file_id)
 
-                # Use MtimeUpdatedFile to handle mod_time gracefully (avoids KeyError('date'))
-                # Only update mod_time if available
-                try:
-                    mod_time_millis = downloaded_file.download_version.mod_time_millis
-                    with MtimeUpdatedFile(output_path, mod_time_millis) as f:
-                        downloaded_file.save(f)
-                except:
-                    # If mod_time is not available, just save without updating time
-                    with open(output_path, 'wb') as f:
-                        downloaded_file.save(f)
+                # Save directly to file without trying to update mod_time
+                # This avoids any KeyError('date') issues with metadata
+                with open(output_path, 'wb') as f:
+                    downloaded_file.save(f, allow_seeking=False)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
