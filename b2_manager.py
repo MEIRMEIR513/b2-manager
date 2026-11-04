@@ -3,7 +3,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from b2sdk.v1 import (
+from b2sdk.v3 import (
     InMemoryAccountInfo,
     B2Api,
     DoNothingProgressListener
@@ -178,21 +178,36 @@ class B2Manager:
 
             self.file_listbox.delete(0, tk.END)
 
-            # List files and folders - ls returns generator of (file_version, folder_name) tuples
-            folders_seen = set()
-            for file_version, folder_name in bucket.ls(folder_to_list=folder_to_list, latest_only=True, recursive=False, fetch_count=1000):
-                if folder_name and folder_name not in folders_seen:
-                    # This is a folder
-                    display_name = folder_name[len(folder_to_list):] if folder_to_list else folder_name
-                    if display_name.endswith('/'):
-                        display_name = display_name[:-1]
-                    self.file_listbox.insert(tk.END, f"📁 {display_name}")
-                    folders_seen.add(folder_name)
-                else:
-                    # This is a file
-                    file_name = file_version.file_name[len(folder_to_list):] if folder_to_list else file_version.file_name
-                    size = self.format_size(file_version.size)
-                    self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+            # List files and folders - following official documentation
+            # bucket.ls() returns generator of (file_version, folder_name) tuples
+            if folder_to_list:
+                # List specific folder
+                for file_version, folder_name in bucket.ls(folder_to_list=folder_to_list, latest_only=True):
+                    if folder_name:
+                        # This is a folder marker
+                        display_name = folder_name[len(folder_to_list):] if folder_to_list else folder_name
+                        if display_name.endswith('/'):
+                            display_name = display_name[:-1]
+                        self.file_listbox.insert(tk.END, f"📁 {display_name}")
+                    else:
+                        # This is a file
+                        file_name = file_version.file_name[len(folder_to_list):] if folder_to_list else file_version.file_name
+                        size = self.format_size(file_version.size)
+                        self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+            else:
+                # List root folder
+                for file_version, folder_name in bucket.ls(latest_only=True):
+                    if folder_name:
+                        # This is a folder
+                        display_name = folder_name
+                        if display_name.endswith('/'):
+                            display_name = display_name[:-1]
+                        self.file_listbox.insert(tk.END, f"📁 {display_name}")
+                    else:
+                        # This is a file
+                        file_name = file_version.file_name
+                        size = self.format_size(file_version.size)
+                        self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
 
             # Update navigation
             if self.current_folder:
@@ -333,18 +348,12 @@ class B2Manager:
         def download_thread():
             try:
                 bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
-                file_info = bucket.get_file_info_by_name(b2_filename)
 
-                # Download with progress
-                progress_listener = DownloadProgressListener(self)
-                downloaded_file = bucket.download_file_by_name(
-                    b2_filename,
-                    progress_listener=progress_listener
-                )
+                # Download using official API
+                downloaded_file = bucket.download_file_by_name(b2_filename)
 
-                # Save to file
-                with open(output_path, 'wb') as f:
-                    downloaded_file.save_to(f)
+                # Save to file following official docs
+                downloaded_file.save_to(output_path)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
