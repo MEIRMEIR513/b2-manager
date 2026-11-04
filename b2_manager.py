@@ -135,7 +135,8 @@ class B2Manager:
         def connect_thread():
             try:
                 self.b2_api = B2Api(self.account_info)
-                self.b2_api.authorize_account('production', key_id, key)
+                # v3 order: application_key_id, application_key, realm
+                self.b2_api.authorize_account(key_id, key, 'production')
                 self.root.after(0, self.connect_complete, True, "Connected successfully!")
             except Exception as e:
                 self.root.after(0, self.connect_complete, False, str(e))
