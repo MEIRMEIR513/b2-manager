@@ -6,9 +6,7 @@ from tkinter import ttk, messagebox, filedialog
 from b2sdk.v1 import (
     InMemoryAccountInfo,
     B2Api,
-    B2HttpRequest,
-    EncryptionSetting,
-    UploadSourceLocalFile
+    DoNothingProgressListener
 )
 
 class B2Manager:
@@ -341,11 +339,15 @@ class B2Manager:
 
                 # Download with progress
                 progress_listener = DownloadProgressListener(self)
-                bucket.download_file_by_id(
-                    file_info.id_,
-                    output_path,
+                downloaded_file = bucket.download_file_by_name(
+                    b2_filename,
                     progress_listener=progress_listener
                 )
+
+                # Save to file
+                with open(output_path, 'wb') as f:
+                    downloaded_file.save_to(f)
+
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
                 self.root.after(0, self.download_complete, False, str(e))
@@ -416,8 +418,9 @@ class B2Manager:
         self.progress['value'] = value
 
 
-class DownloadProgressListener:
+class DownloadProgressListener(DoNothingProgressListener):
     def __init__(self, app):
+        super().__init__()
         self.app = app
         self.bytes_total = 0
         self.bytes_so_far = 0
