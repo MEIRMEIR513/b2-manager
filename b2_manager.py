@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -352,9 +353,9 @@ class B2Manager:
                 # Download by ID (most stable method)
                 downloaded_file = self.b2_api.download_file_by_id(file_id)
 
-                # Save to file using write() instead of save_to() to avoid metadata issues
+                # Save to file using save() which handles metadata better
                 with open(output_path, 'wb') as f:
-                    downloaded_file.write(f)
+                    downloaded_file.save(f)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
