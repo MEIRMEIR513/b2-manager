@@ -1,6 +1,7 @@
 import os
 import sys
 import threading
+import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from b2sdk.v2 import (
@@ -349,13 +350,39 @@ class B2Manager:
 
         def download_thread():
             try:
-                # Download by ID (most stable method)
-                downloaded_file = self.b2_api.download_file_by_id(file_id)
+                # Use b2-windows.exe CLI for download (regular CLI method)
+                # This avoids b2sdk metadata parsing issues
+                # Get the path to b2-windows.exe (bundled with the app)
+                if getattr(sys, 'frozen', False):
+                    # Running as EXE - b2-windows.exe should be in the same directory
+                    b2_cli_path = os.path.join(os.path.dirname(sys.executable), 'b2-windows.exe')
+                else:
+                    # Running as script - use the one in Downloads
+                    b2_cli_path = os.path.join(os.path.dirname(__file__), 'b2-windows.exe')
 
-                # Save directly to file without trying to update mod_time
-                # This avoids any KeyError('date') issues with metadata
-                with open(output_path, 'wb') as f:
-                    downloaded_file.save(f, allow_seeking=False)
+                if not os.path.exists(b2_cli_path):
+                    # Fallback to Downloads directory
+                    b2_cli_path = r'C:\Users\USER\Downloads\b2-windows.exe'
+
+                # Use b2id:// URI for download by file ID (most reliable)
+                cmd = [b2_cli_path, 'file', 'download', f'b2id://{file_id}', output_path]
+
+                # Run with hidden window
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                result = subprocess.run(
+                    cmd,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                if result.returncode != 0:
+                    raise Exception(f"CLI download failed: {result.stderr}")
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
