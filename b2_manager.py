@@ -1,13 +1,13 @@
 import os
 import sys
-import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from b2sdk.v2 import (
     InMemoryAccountInfo,
     B2Api,
-    DoNothingProgressListener
+    DoNothingProgressListener,
+    MtimeUpdatedFile
 )
 
 class B2Manager:
@@ -353,9 +353,16 @@ class B2Manager:
                 # Download by ID (most stable method)
                 downloaded_file = self.b2_api.download_file_by_id(file_id)
 
-                # Save to file using save() which handles metadata better
-                with open(output_path, 'wb') as f:
-                    downloaded_file.save(f)
+                # Use MtimeUpdatedFile to handle mod_time gracefully (avoids KeyError('date'))
+                # Only update mod_time if available
+                try:
+                    mod_time_millis = downloaded_file.download_version.mod_time_millis
+                    with MtimeUpdatedFile(output_path, mod_time_millis) as f:
+                        downloaded_file.save(f)
+                except:
+                    # If mod_time is not available, just save without updating time
+                    with open(output_path, 'wb') as f:
+                        downloaded_file.save(f)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
