@@ -18,9 +18,11 @@ class B2Manager:
 
         self.selected_bucket = None
         self.selected_file = None
+        self.selected_file_id = None
         self.current_folder = ""
         self.b2_api = None
         self.account_info = InMemoryAccountInfo()
+        self.file_dict = {}  # Store file_id mapping
 
         self.create_widgets()
 
@@ -178,6 +180,7 @@ class B2Manager:
             folder_to_list = self.current_folder
 
             self.file_listbox.delete(0, tk.END)
+            self.file_dict = {}  # Clear file dict
 
             # List files and folders - following official documentation
             # bucket.ls() returns generator of (file_version, folder_name) tuples
@@ -194,7 +197,9 @@ class B2Manager:
                         # This is a file
                         file_name = file_version.file_name[len(folder_to_list):] if folder_to_list else file_version.file_name
                         size = self.format_size(file_version.size)
-                        self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+                        display_item = f"📄 {file_name} ({size})"
+                        self.file_listbox.insert(tk.END, display_item)
+                        self.file_dict[display_item] = (file_version.id_, file_version.file_name)
             else:
                 # List root folder
                 for file_version, folder_name in bucket.ls(latest_only=True):
@@ -208,7 +213,9 @@ class B2Manager:
                         # This is a file
                         file_name = file_version.file_name
                         size = self.format_size(file_version.size)
-                        self.file_listbox.insert(tk.END, f"📄 {file_name} ({size})")
+                        display_item = f"📄 {file_name} ({size})"
+                        self.file_listbox.insert(tk.END, display_item)
+                        self.file_dict[display_item] = (file_version.id_, file_version.file_name)
 
             # Update navigation
             if self.current_folder:
@@ -329,18 +336,12 @@ class B2Manager:
             messagebox.showerror("Error", "Invalid download path")
             return
 
-        # Extract actual filename from display
-        display_name = self.selected_file[2:].strip()
-        # Remove size info if present
-        if '(' in display_name:
-            display_name = display_name.rsplit('(', 1)[0].strip()
+        # Get file_id from dict
+        if self.selected_file not in self.file_dict:
+            messagebox.showerror("Error", "File information not found")
+            return
 
-        # Build full B2 path
-        if self.current_folder:
-            b2_filename = self.current_folder + '/' + display_name
-        else:
-            b2_filename = display_name
-
+        file_id, b2_filename = self.file_dict[self.selected_file]
         output_path = os.path.join(download_path, os.path.basename(b2_filename))
 
         self.status_label.config(text="Downloading...", fg="blue")
@@ -348,13 +349,12 @@ class B2Manager:
 
         def download_thread():
             try:
-                bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
+                # Download by ID (most stable method)
+                downloaded_file = self.b2_api.download_file_by_id(file_id)
 
-                # Download using official API
-                downloaded_file = bucket.download_file_by_name(b2_filename)
-
-                # Save to file following official docs
-                downloaded_file.save_to(output_path)
+                # Save to file
+                with open(output_path, 'wb') as f:
+                    downloaded_file.save_to(f)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
@@ -385,17 +385,14 @@ class B2Manager:
             messagebox.showerror("Error", "Cannot delete folders via this interface yet.")
             return
 
-        # Extract actual filename
-        display_name = self.selected_file[2:].strip()
-        if '(' in display_name:
-            display_name = display_name.rsplit('(', 1)[0].strip()
+        # Get file_id from dict
+        if self.selected_file not in self.file_dict:
+            messagebox.showerror("Error", "File information not found")
+            return
 
-        if self.current_folder:
-            b2_filename = self.current_folder + '/' + display_name
-        else:
-            b2_filename = display_name
+        file_id, b2_filename = self.file_dict[self.selected_file]
 
-        if not messagebox.askyesno("Confirm", f"Are you sure you want to delete {display_name}?"):
+        if not messagebox.askyesno("Confirm", f"Are you sure you want to delete {os.path.basename(b2_filename)}?"):
             return
 
         self.status_label.config(text="Deleting...", fg="blue")
@@ -404,8 +401,7 @@ class B2Manager:
         def delete_thread():
             try:
                 bucket = self.b2_api.get_bucket_by_name(self.selected_bucket)
-                file_info = bucket.get_file_info_by_name(b2_filename)
-                bucket.delete_file_version(file_info.id_, file_info.file_name)
+                bucket.delete_file_version(file_id, b2_filename)
                 self.root.after(0, self.delete_complete, True, "Delete successful!")
             except Exception as e:
                 self.root.after(0, self.delete_complete, False, str(e))
