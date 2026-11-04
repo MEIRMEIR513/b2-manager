@@ -352,9 +352,9 @@ class B2Manager:
                 # Download by ID (most stable method)
                 downloaded_file = self.b2_api.download_file_by_id(file_id)
 
-                # Save to file
+                # Save to file using write() instead of save_to() to avoid metadata issues
                 with open(output_path, 'wb') as f:
-                    downloaded_file.save_to(f)
+                    downloaded_file.write(f)
 
                 self.root.after(0, self.download_complete, True, "Download successful!")
             except Exception as e:
